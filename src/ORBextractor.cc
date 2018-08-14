@@ -59,6 +59,7 @@
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <vector>
+#include <parallel_for_thread.hpp>
 
 #include "ORBextractor.h"
 
@@ -1095,13 +1096,21 @@ void ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPo
         if (level != 0)
         {
             float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
-            for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
-                 keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
-                keypoint->pt *= scale;
+            //for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+            //     keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint)
+            //    keypoint->pt *= scale;
+	    threaded_scale(keypoints.data(), keypoints.size(), scale);
         }
         // And add the keypoints to the output
         _keypoints.insert(_keypoints.end(), keypoints.begin(), keypoints.end());
     }
+}
+
+void ORBextractor::threaded_scale(KeyPoint * keypoints, const int npoints, const float scale){
+    parallel_for(npoints, [&](int start, int end){
+        for(int i = start; i < end; ++i)
+            keypoints[i].pt *= scale;
+    } );
 }
 
 void ORBextractor::ComputePyramid(cv::Mat image)

@@ -22,6 +22,7 @@
 #include "Converter.h"
 #include "ORBmatcher.h"
 #include <thread>
+#include <Utils.hpp>
 
 namespace ORB_SLAM2
 {
@@ -75,10 +76,13 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
+    SET_CLOCK(extractStart);
     thread threadLeft(&Frame::ExtractORB,this,0,imLeft);
     thread threadRight(&Frame::ExtractORB,this,1,imRight);
     threadLeft.join();
     threadRight.join();
+    SET_CLOCK(extractEnd);
+    std::cout << "ORB extraction: " << TIME_DIFF(extractEnd,extractStart) << std::endl;
 
     N = mvKeys.size();
 
@@ -87,7 +91,10 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 
     UndistortKeyPoints();
 
+    SET_CLOCK(sStart);
     ComputeStereoMatches();
+    SET_CLOCK(sEnd);
+    std::cout << "Stereo Matches: " << TIME_DIFF(sEnd,sStart) << std::endl;
 
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));    
     mvbOutlier = vector<bool>(N,false);
@@ -133,7 +140,10 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     mvInvLevelSigma2 = mpORBextractorLeft->GetInverseScaleSigmaSquares();
 
     // ORB extraction
+    SET_CLOCK(extractStart);
     ExtractORB(0,imGray);
+    SET_CLOCK(extractEnd);
+    std::cout << "ORB extraction: " << TIME_DIFF(extractEnd,extractStart) << std::endl;
 
     N = mvKeys.size();
 
@@ -142,7 +152,10 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
 
     UndistortKeyPoints();
 
+    SET_CLOCK(sStart);
     ComputeStereoFromRGBD(imDepth);
+    SET_CLOCK(sEnd);
+    std::cout << "Stereo Matches: " << TIME_DIFF(sEnd,sStart) << std::endl;
 
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
     mvbOutlier = vector<bool>(N,false);
