@@ -87,32 +87,35 @@ int main(int argc, char **argv)
     //The start function returns the pipeline profile which the pipeline used to start the device
     //rs2::pipeline_profile profile = pipe.start();
 
+    //Create a configuration for configuring the pipeline with a non default profile
+    //rs2::config cfg;
+
+    //Add desired streams to configuration
+    //cfg.enable_stream(RS2_STREAM_COLOR, WIDTH, HEIGHT, RS2_FORMAT_Y8, 30);
+    //cfg.enable_stream(RS2_STREAM_DEPTH, WIDTH, HEIGHT, RS2_FORMAT_Z16, 30);
+
+    rs2::pipeline_profile selection = pipe.start();//cfg);
+
     // Each depth camera might have different units for depth pixels, so we get it here
     // Using the pipeline's profile, we can retrieve the device that the pipeline uses
-    //float depth_scale = get_depth_scale(profile.get_device());
+    float depth_scale = get_depth_scale(selection.get_device());
 
     //Pipeline could choose a device that does not have a color stream
     //If there is no color stream, choose to align depth to another stream
-    //rs2_stream align_to = find_stream_to_align(profile.get_streams());
+    rs2_stream align_to = find_stream_to_align(selection.get_streams());
 
     // Create a rs2::align object.
     // rs2::align allows us to perform alignment of depth frames to others frames
     //The "align_to" is the stream type to which we plan to align depth frames.
-    //rs2::align align(align_to);
+    rs2::align align(align_to);
 
-    //Create a configuration for configuring the pipeline with a non default profile
-    rs2::config cfg;
-
-    //Add desired streams to configuration
-    cfg.enable_stream(RS2_STREAM_INFRARED, 1280, 720, RS2_FORMAT_Y8, 30);
-    cfg.enable_stream(RS2_STREAM_DEPTH, 1280, 720, RS2_FORMAT_Z16, 30);
 
     //cfg.enable_stream(RS2_STREAM_INFRARED, 1, WIDTH, HEIGHT, RS2_FORMAT_Y8, FPS);
     //cfg.enable_stream(RS2_STREAM_INFRARED, 2, WIDTH, HEIGHT, RS2_FORMAT_Y8, FPS);
 
     //Instruct pipeline to start streaming with the requested configuration
     //Instruct pipeline to start streaming with the requested configuration
-    rs2::pipeline_profile selection = pipe.start(cfg);
+    
     auto depth_stream = selection.get_stream(RS2_STREAM_DEPTH)
                              .as<rs2::video_stream_profile>();
     auto resolution = std::make_pair(depth_stream.width(), depth_stream.height());
@@ -160,13 +163,13 @@ int main(int argc, char **argv)
 
       //Get each frame
       frames = pipe.wait_for_frames();
-      rs2::video_frame ir_frame = frames.first(RS2_STREAM_INFRARED);
-      rs2::depth_frame d_frame = frames.get_depth_frame();
+      //rs2::video_frame ir_frame = frames.first(RS2_STREAM_INFRARED);
+     // rs2::depth_frame d_frame = frames.get_depth_frame();
 
       SET_CLOCK(t1);
 
-      cv::Mat infared = frame_to_mat(ir_frame);
-      cv::Mat depth = depth_frame_to_meters(pipe, d_frame);
+      //cv::Mat infared = frame_to_mat(ir_frame);
+      //cv::Mat depth = depth_frame_to_meters(pipe, d_frame);
       // get left and right infrared frames from frameset
       //rs2::video_frame ir_frame_left = frames.get_infrared_frame(1);
       //rs2::video_frame ir_frame_right = frames.get_infrared_frame(2);
@@ -179,37 +182,37 @@ int main(int argc, char **argv)
       // rs2::pipeline::wait_for_frames() can replace the device it uses in case of device error or disconnection.
       // Since rs2::align is aligning depth to some other stream, we need to make sure that the stream was not changed
       //  after the call to wait_for_frames();
-      /*
-      if (profile_changed(pipe.get_active_profile().get_streams(), profile.get_streams()))
+      
+      if (profile_changed(pipe.get_active_profile().get_streams(), selection.get_streams()))
       {
           //If the profile was changed, update the align object, and also get the new device's depth scale
-          profile = pipe.get_active_profile();
-          align_to = find_stream_to_align(profile.get_streams());
+          selection = pipe.get_active_profile();
+          align_to = find_stream_to_align(selection.get_streams());
           align = rs2::align(align_to);
-          depth_scale = get_depth_scale(profile.get_device());
+          depth_scale = get_depth_scale(selection.get_device());
       }
-      */
+      
 
       //Get processed aligned frame
-      //auto processed = align.process(frames);
+      auto processed = align.process(frames);
 
       // Trying to get both other and aligned depth frames
-      //rs2::video_frame other_frame = processed.first(align_to);
-      //rs2::depth_frame aligned_depth_frame = processed.get_depth_frame();
+      rs2::video_frame other_frame = processed.first(align_to);
+      rs2::depth_frame aligned_depth_frame = processed.get_depth_frame();
 
       //If one of them is unavailable, continue iteration
-      //if (!aligned_depth_frame || !other_frame)
-      //{
-      //    continue;
-      //}
+      if (!aligned_depth_frame || !other_frame)
+      {
+          continue;
+      }
       
       double tframe = TIME_DIFF(t1, t0);
       if (tframe > TIME) {
         break;
       }
 
-      //cv::Mat infared = frame_to_mat(other_frame);
-      //cv::Mat depth = frame_to_mat(aligned_depth_frame);
+      cv::Mat infared = frame_to_mat(other_frame);
+      cv::Mat depth = frame_to_mat(aligned_depth_frame);
 
       PUSH_RANGE("Track image", 4);
       // Pass the image to the SLAM system
