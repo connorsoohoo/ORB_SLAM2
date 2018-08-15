@@ -111,7 +111,19 @@ int main(int argc, char **argv)
     //cfg.enable_stream(RS2_STREAM_INFRARED, 2, WIDTH, HEIGHT, RS2_FORMAT_Y8, FPS);
 
     //Instruct pipeline to start streaming with the requested configuration
-    pipe.start(cfg);
+    //Instruct pipeline to start streaming with the requested configuration
+    rs2::pipeline_profile selection = pipe.start(cfg);
+    auto depth_stream = selection.get_stream(RS2_STREAM_DEPTH)
+                             .as<rs2::video_stream_profile>();
+    auto resolution = std::make_pair(depth_stream.width(), depth_stream.height());
+    auto i = depth_stream.get_intrinsics();
+    auto principal_point = std::make_pair(i.ppx, i.ppy);
+    auto focal_length = std::make_pair(i.fx, i.fy);
+
+    //std::cout << "Width: " << resolution[0] << "Height: " << resolution[1] << std::endl;
+    std::cout << "ppx: " << i.ppx << " ppy: " << i.ppy << std::endl;
+    std::cout << "fx: " << i.fx << " fy: " << i.fy << std::endl;
+    std::cout << "k1: " << i.coeffs[0] << " k2: " << i.coeffs[1] << " p1: " << i.coeffs[2] << " p2: " << i.coeffs[3] << " k3: " << i.coeffs[4] << std::endl;
 
     // Camera warmup - dropping several first frames to let auto-exposure stabilize
     rs2::frameset frames;

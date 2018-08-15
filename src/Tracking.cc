@@ -843,20 +843,6 @@ bool Tracking::TrackReferenceKeyFrame()
 }
 
 
-vector<pair<float,int>> Tracking::threaded_create(vector<pair<float,int>> vDepthIndices)
-{
-    parallel_for(mLastFrame.N, [&](int start, int end){
-        for(int i = start; i < end; ++i) {
-	    float z = mLastFrame.mvDepth[i];
-            if(z>0)
-            {
-                vDepthIndices.push_back(make_pair(z,i));
-            }
-	}
-    } );
-    return vDepthIndices;
-}
-
 void Tracking::UpdateLastFrame()
 {
     // Update pose according to reference keyframe
@@ -872,8 +858,8 @@ void Tracking::UpdateLastFrame()
     // We sort points according to their measured depth by the stereo/RGB-D sensor
     vector<pair<float,int> > vDepthIdx;
     vDepthIdx.reserve(mLastFrame.N);
-    /*
-    for(int i=0; i<mLastFrame.N;i++)
+    parallel_for(mLastFrame.N, [&](int start, int end){
+    for(int i=start; i<end;i++)
     {
         float z = mLastFrame.mvDepth[i];
         if(z>0)
@@ -881,9 +867,7 @@ void Tracking::UpdateLastFrame()
             vDepthIdx.push_back(make_pair(z,i));
         }
     }
-    */
-    
-    vDepthIdx = threaded_create(vDepthIdx);
+    });
 
     if(vDepthIdx.empty())
         return;
