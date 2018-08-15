@@ -28,6 +28,8 @@
 #include "Thirdparty/DBoW2/DBoW2/FeatureVector.h"
 
 #include<stdint-gcc.h>
+#include<parallel_for_thread.hpp>
+#include<atomic>
 
 using namespace std;
 
@@ -47,8 +49,9 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
     int nmatches=0;
 
     const bool bFactor = th!=1.0;
-
-    for(size_t iMP=0; iMP<vpMapPoints.size(); iMP++)
+    std::atomic<long long> nm(nmatches);
+    parallel_for(vpMapPoints.size(), [&](size_t start, size_t end){
+    for(size_t iMP=start; iMP<end; iMP++)
     {
         MapPoint* pMP = vpMapPoints[iMP];
         if(!pMP->mbTrackInView)
@@ -121,10 +124,12 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
                 continue;
 
             F.mvpMapPoints[bestIdx]=pMP;
-            nmatches++;
+            //nmatches++;
+	    nm.fetch_add(1, std::memory_order_relaxed);
         }
     }
-
+    });
+    nmatches = (int) nm;
     return nmatches;
 }
 
@@ -165,6 +170,7 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
     const DBoW2::FeatureVector &vFeatVecKF = pKF->mFeatVec;
 
     int nmatches=0;
+    std::atomic<long long> nm(nmatches);
 
     vector<int> rotHist[HISTO_LENGTH];
     for(int i=0;i<HISTO_LENGTH;i++)
@@ -184,7 +190,8 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
             const vector<unsigned int> vIndicesKF = KFit->second;
             const vector<unsigned int> vIndicesF = Fit->second;
 
-            for(size_t iKF=0; iKF<vIndicesKF.size(); iKF++)
+	    parallel_for(vIndicesKF.size(), [&](size_t start, size_t end){
+            for(size_t iKF=start; iKF<end; iKF++)
             {
                 const unsigned int realIdxKF = vIndicesKF[iKF];
 
@@ -244,11 +251,14 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
                             assert(bin>=0 && bin<HISTO_LENGTH);
                             rotHist[bin].push_back(bestIdxF);
                         }
-                        nmatches++;
+                        //nmatches++;
+			nm.fetch_add(1, std::memory_order_relaxed);
                     }
                 }
 
             }
+	    });
+	    nmatches = (int) nm;
 
             KFit++;
             Fit++;
@@ -261,6 +271,7 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
         {
             Fit = F.mFeatVec.lower_bound(KFit->first);
         }
+	nmatches = (int) nm;
     }
 
 
@@ -272,16 +283,22 @@ int ORBmatcher::SearchByBoW(KeyFrame* pKF,Frame &F, vector<MapPoint*> &vpMapPoin
 
         ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
 
-        for(int i=0; i<HISTO_LENGTH; i++)
+	std::atomic<long long> nm2(nmatches);
+
+	parallel_for(HISTO_LENGTH, [&](int start, int end){
+        for(int i=start; i<end; i++)
         {
             if(i==ind1 || i==ind2 || i==ind3)
                 continue;
             for(size_t j=0, jend=rotHist[i].size(); j<jend; j++)
             {
                 vpMapPointMatches[rotHist[i][j]]=static_cast<MapPoint*>(NULL);
-                nmatches--;
+                //nmatches--;
+		nm2.fetch_sub(1, std::memory_order_relaxed);
             }
         }
+	});
+	nmatches = (int) nm2;
     }
 
     return nmatches;
@@ -307,9 +324,10 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
     spAlreadyFound.erase(static_cast<MapPoint*>(NULL));
 
     int nmatches=0;
-
+    std::atomic<long long> nm(nmatches);
     // For each Candidate MapPoint Project and Match
-    for(int iMP=0, iendMP=vpPoints.size(); iMP<iendMP; iMP++)
+    parallel_for(vpPoints.size(), [&](int start, int end){
+    for(int iMP=start, iendMP=end; iMP<iendMP; iMP++)
     {
         MapPoint* pMP = vpPoints[iMP];
 
@@ -394,10 +412,13 @@ int ORBmatcher::SearchByProjection(KeyFrame* pKF, cv::Mat Scw, const vector<MapP
         if(bestDist<=TH_LOW)
         {
             vpMatched[bestIdx]=pMP;
-            nmatches++;
+            //nmatches++;
+	    nm.fetch_add(1, std::memory_order_relaxed);
         }
 
     }
+    });
+    nmatches = (int) nm;
 
     return nmatches;
 }
@@ -415,7 +436,9 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
     vector<int> vMatchedDistance(F2.mvKeysUn.size(),INT_MAX);
     vector<int> vnMatches21(F2.mvKeysUn.size(),-1);
 
-    for(size_t i1=0, iend1=F1.mvKeysUn.size(); i1<iend1; i1++)
+    std::atomic<long long> nm(nmatches);
+    parallel_for(F1.mvKeysUn.size(), [&](size_t start, size_t end){
+    for(size_t i1=start, iend1=end; i1<iend1; i1++)
     {
         cv::KeyPoint kp1 = F1.mvKeysUn[i1];
         int level1 = kp1.octave;
@@ -463,12 +486,14 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
                 if(vnMatches21[bestIdx2]>=0)
                 {
                     vnMatches12[vnMatches21[bestIdx2]]=-1;
-                    nmatches--;
+                    //nmatches--;
+		    nm.fetch_sub(1, std::memory_order_relaxed);
                 }
                 vnMatches12[i1]=bestIdx2;
                 vnMatches21[bestIdx2]=i1;
                 vMatchedDistance[bestIdx2]=bestDist;
-                nmatches++;
+		nm.fetch_add(1, std::memory_order_relaxed);
+                //nmatches++;
 
                 if(mbCheckOrientation)
                 {
@@ -485,6 +510,8 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
         }
 
     }
+    });
+    nmatches = (int) nm;
 
     if(mbCheckOrientation)
     {
@@ -494,7 +521,9 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
 
         ComputeThreeMaxima(rotHist,HISTO_LENGTH,ind1,ind2,ind3);
 
-        for(int i=0; i<HISTO_LENGTH; i++)
+        std::atomic<long long> nm2(nmatches);
+        parallel_for(HISTO_LENGTH, [&](int start, int end){
+        for(int i=start; i<end; i++)
         {
             if(i==ind1 || i==ind2 || i==ind3)
                 continue;
@@ -504,17 +533,21 @@ int ORBmatcher::SearchForInitialization(Frame &F1, Frame &F2, vector<cv::Point2f
                 if(vnMatches12[idx1]>=0)
                 {
                     vnMatches12[idx1]=-1;
-                    nmatches--;
+                    //nmatches--;
+		    nm.fetch_sub(1, std::memory_order_relaxed);
                 }
             }
         }
-
+	});
+	nmatches = (int) nm2;
     }
 
     //Update prev matched
+    parallel_for(vnMatches12.size(), [&](size_t start, size_t end){
     for(size_t i1=0, iend1=vnMatches12.size(); i1<iend1; i1++)
         if(vnMatches12[i1]>=0)
             vbPrevMatched[i1]=F2.mvKeysUn[vnMatches12[i1]].pt;
+    });
 
     return nmatches;
 }

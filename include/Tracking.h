@@ -117,6 +117,8 @@ public:
 
 protected:
 
+    vector<pair<float,int>> threaded_create(vector<pair<float,int>> vDepthIndices);
+
     // Main tracking function. It is independent of the input sensor.
     void Track();
 

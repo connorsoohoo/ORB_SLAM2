@@ -34,6 +34,10 @@
 #include"PnPsolver.h"
 
 #include<iostream>
+#include<atomic>
+#include<thread>
+#include<Utils.hpp>
+#include<parallel_for_thread.hpp>
 
 #include<mutex>
 
@@ -198,7 +202,10 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
 
     mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
 
+    SET_CLOCK(ts);
     Track();
+    SET_CLOCK(te);
+    std::cout << "Track time: " << TIME_DIFF(te,ts) << std::endl;
 
     return mCurrentFrame.mTcw.clone();
 }
@@ -259,7 +266,10 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
     else
         mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
 
+    SET_CLOCK(ts);
     Track();
+    SET_CLOCK(te);
+    std::cout << "Track time: " << TIME_DIFF(te,ts) << std::endl;
 
     return mCurrentFrame.mTcw.clone();
 }
@@ -756,6 +766,7 @@ void Tracking::CheckReplacedInLastFrame()
 
 bool Tracking::TrackReferenceKeyFrame()
 {
+    SET_CLOCK(refs);
     // Compute Bag of Words vector
     mCurrentFrame.ComputeBoW();
 
@@ -776,6 +787,35 @@ bool Tracking::TrackReferenceKeyFrame()
 
     // Discard outliers
     int nmatchesMap = 0;
+    
+    
+    std::atomic<long long> nm(nmatches);
+    std::atomic<long long> nmMap(nmatchesMap); 
+
+    parallel_for(mCurrentFrame.N, [&](int start, int end){
+        for(int i = start; i < end; ++i) {
+            if(mCurrentFrame.mvpMapPoints[i])
+            {
+                if(mCurrentFrame.mvbOutlier[i])
+                {
+                    MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+
+                    mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
+                    mCurrentFrame.mvbOutlier[i]=false;
+                    pMP->mbTrackInView = false;
+                    pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+                    nm.fetch_sub(1, std::memory_order_relaxed);
+                }
+                else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                    nmMap.fetch_add(1, std::memory_order_relaxed);
+            }
+	}
+    } ); 
+
+    nmatches = (int) nm; 
+    nmatchesMap = (int) nmMap; 
+    
+    /*
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -794,8 +834,27 @@ bool Tracking::TrackReferenceKeyFrame()
                 nmatchesMap++;
         }
     }
+    */
+    
 
+    SET_CLOCK(refe);
     return nmatchesMap>=10;
+    std::cout << "Track reference frame: " << TIME_DIFF(refe,refs) << std::endl;
+}
+
+
+vector<pair<float,int>> Tracking::threaded_create(vector<pair<float,int>> vDepthIndices)
+{
+    parallel_for(mLastFrame.N, [&](int start, int end){
+        for(int i = start; i < end; ++i) {
+	    float z = mLastFrame.mvDepth[i];
+            if(z>0)
+            {
+                vDepthIndices.push_back(make_pair(z,i));
+            }
+	}
+    } );
+    return vDepthIndices;
 }
 
 void Tracking::UpdateLastFrame()
@@ -813,6 +872,7 @@ void Tracking::UpdateLastFrame()
     // We sort points according to their measured depth by the stereo/RGB-D sensor
     vector<pair<float,int> > vDepthIdx;
     vDepthIdx.reserve(mLastFrame.N);
+    /*
     for(int i=0; i<mLastFrame.N;i++)
     {
         float z = mLastFrame.mvDepth[i];
@@ -821,6 +881,9 @@ void Tracking::UpdateLastFrame()
             vDepthIdx.push_back(make_pair(z,i));
         }
     }
+    */
+    
+    vDepthIdx = threaded_create(vDepthIdx);
 
     if(vDepthIdx.empty())
         return;
@@ -866,6 +929,7 @@ void Tracking::UpdateLastFrame()
 
 bool Tracking::TrackWithMotionModel()
 {
+    SET_CLOCK(mots);
     ORBmatcher matcher(0.9,true);
 
     // Update last frame pose according to its reference keyframe
@@ -899,6 +963,33 @@ bool Tracking::TrackWithMotionModel()
 
     // Discard outliers
     int nmatchesMap = 0;
+    
+    std::atomic<long long> nm(nmatches);
+    std::atomic<long long> nmMap(nmatchesMap); 
+    parallel_for(mCurrentFrame.N, [&](int start, int end){
+        for(int i = start; i < end; ++i) {
+            if(mCurrentFrame.mvpMapPoints[i])
+            {
+                if(mCurrentFrame.mvbOutlier[i])
+                {
+                    MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+
+                    mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
+                    mCurrentFrame.mvbOutlier[i]=false;
+                    pMP->mbTrackInView = false;
+                    pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+		    nm.fetch_sub(1, std::memory_order_relaxed);
+                    //nm--;
+                }
+                else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                    nmMap.fetch_add(1, std::memory_order_relaxed);
+            }
+	}
+    } ); 
+    nmatches = (int) nm; 
+    nmatchesMap = (int) nmMap; 
+    
+    /*
     for(int i =0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -916,7 +1007,8 @@ bool Tracking::TrackWithMotionModel()
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
                 nmatchesMap++;
         }
-    }    
+    }
+    */
 
     if(mbOnlyTracking)
     {
@@ -924,6 +1016,8 @@ bool Tracking::TrackWithMotionModel()
         return nmatches>20;
     }
 
+    SET_CLOCK(mote);
+    std::cout << "Track Motion Model: " << TIME_DIFF(mote,mots) << std::endl;
     return nmatchesMap>=10;
 }
 
@@ -931,7 +1025,7 @@ bool Tracking::TrackLocalMap()
 {
     // We have an estimation of the camera pose and some map points tracked in the frame.
     // We retrieve the local map and try to find matches to points in the local map.
-
+    SET_CLOCK(local);
     UpdateLocalMap();
 
     SearchLocalPoints();
@@ -941,7 +1035,9 @@ bool Tracking::TrackLocalMap()
     mnMatchesInliers = 0;
 
     // Update MapPoints Statistics
-    for(int i=0; i<mCurrentFrame.N; i++)
+    std::atomic<long long> inliers(mnMatchesInliers);
+    parallel_for(mCurrentFrame.N, [&](int start, int end){
+    for(int i=start; i<end; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
         {
@@ -951,17 +1047,21 @@ bool Tracking::TrackLocalMap()
                 if(!mbOnlyTracking)
                 {
                     if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
-                        mnMatchesInliers++;
+                        inliers.fetch_add(1, std::memory_order_relaxed);
                 }
                 else
-                    mnMatchesInliers++;
+                    inliers.fetch_add(1, std::memory_order_relaxed);
             }
             else if(mSensor==System::STEREO)
                 mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
 
         }
     }
+    });
+    mnMatchesInliers = (int) inliers;
 
+    SET_CLOCK(locale);
+    std::cout << "Track Local Map: " << TIME_DIFF(locale,local) << std::endl;
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
     if(mCurrentFrame.mnId<mnLastRelocFrameId+mMaxFrames && mnMatchesInliers<50)
@@ -1001,18 +1101,27 @@ bool Tracking::NeedNewKeyFrame()
     // Check how many "close" points are being tracked and how many could be potentially created.
     int nNonTrackedClose = 0;
     int nTrackedClose= 0;
+    
+
     if(mSensor!=System::MONOCULAR)
     {
-        for(int i =0; i<mCurrentFrame.N; i++)
+	
+	std::atomic<long long> nontrack(nNonTrackedClose);
+	std::atomic<long long> ntrack(nTrackedClose);
+	parallel_for(mCurrentFrame.N, [&](int start, int end){
+        for(int i=start; i<end; i++)
         {
             if(mCurrentFrame.mvDepth[i]>0 && mCurrentFrame.mvDepth[i]<mThDepth)
             {
                 if(mCurrentFrame.mvpMapPoints[i] && !mCurrentFrame.mvbOutlier[i])
-                    nTrackedClose++;
+                    ntrack.fetch_add(1, std::memory_order_relaxed);
                 else
-                    nNonTrackedClose++;
+                    nontrack.fetch_add(1, std::memory_order_relaxed);
             }
         }
+	});
+	nNonTrackedClose = (int) nontrack;
+	nTrackedClose = (int) ntrack;
     }
 
     bool bNeedToInsertClose = (nTrackedClose<100) && (nNonTrackedClose>70);
@@ -1062,6 +1171,7 @@ bool Tracking::NeedNewKeyFrame()
 
 void Tracking::CreateNewKeyFrame()
 {
+    SET_CLOCK(create);
     if(!mpLocalMapper->SetNotStop(true))
         return;
 
@@ -1079,7 +1189,9 @@ void Tracking::CreateNewKeyFrame()
         // If there are less than 100 close points we create the 100 closest.
         vector<pair<float,int> > vDepthIdx;
         vDepthIdx.reserve(mCurrentFrame.N);
-        for(int i=0; i<mCurrentFrame.N; i++)
+
+	parallel_for(mCurrentFrame.N, [&](int start, int end){
+        for(int i=start; i<end; i++)
         {
             float z = mCurrentFrame.mvDepth[i];
             if(z>0)
@@ -1087,6 +1199,7 @@ void Tracking::CreateNewKeyFrame()
                 vDepthIdx.push_back(make_pair(z,i));
             }
         }
+	});
 
         if(!vDepthIdx.empty())
         {
@@ -1138,6 +1251,8 @@ void Tracking::CreateNewKeyFrame()
 
     mnLastKeyFrameId = mCurrentFrame.mnId;
     mpLastKeyFrame = pKF;
+    SET_CLOCK(createDone);
+    std::cout << "Create New Keyframe: " << TIME_DIFF(createDone,create) << std::endl;
 }
 
 void Tracking::SearchLocalPoints()
